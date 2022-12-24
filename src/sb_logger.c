@@ -42,14 +42,6 @@
 #define TEXT_BUFFER_SIZE 4096
 #define ERROR_BUFFER_SIZE 256
 
-/*
-   Use 1024-element array for latency histogram tracking values between 0.001
-   milliseconds and 100 seconds.
-*/
-#define OPER_LOG_GRANULARITY 1024
-#define OPER_LOG_MIN_VALUE   1e-3
-#define OPER_LOG_MAX_VALUE   1E5
-
 /* Array of message handlers (one chain per message type) */
 
 static sb_list_t handlers[LOG_MSG_TYPE_MAX];

@@ -32,6 +32,14 @@
 #include "sb_timer.h"
 #include "sb_histogram.h"
 
+/*
+   Use 1024-element array for latency histogram tracking values between 0.001
+   milliseconds and 100 seconds.
+*/
+#define OPER_LOG_GRANULARITY 1024
+#define OPER_LOG_MIN_VALUE 1e-3
+#define OPER_LOG_MAX_VALUE 1E5
+
 /* Text message flags (used in the 'flags' field of log_text_msg_t) */
 
 #define LOG_MSG_TEXT_ALLOW_DUPLICATES 1

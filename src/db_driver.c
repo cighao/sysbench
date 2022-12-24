@@ -48,6 +48,9 @@
 /* Global variables */
 db_globals_t db_globals CK_CC_CACHELINE;
 
+/* Global latency histogram */
+static sb_histogram_t db_query_latency_histogram CK_CC_CACHELINE;
+
 static sb_list_t        drivers;          /* list of available DB drivers */
 
 static uint8_t stats_enabled;
@@ -68,6 +71,18 @@ static void db_free_row(db_row_t *);
 static int db_bulk_do_insert(db_conn_t *, int);
 static void db_reset_stats(void);
 static int db_free_results_int(db_conn_t *con);
+
+static void sb_query_start(int thread_id)
+{
+  sb_timer_start(&exec_timers[thread_id]);
+}
+
+static void sb_query_stop(int thread_id)
+{
+  sb_timer_t *timer = &exec_timers[thread_id];
+  long long value = sb_timer_stop(timer);
+  sb_histogram_update(&db_query_latency_histogram, NS2MS(value));
+}
 
 /* DB layer arguments */
 
@@ -180,11 +195,15 @@ static void db_init(void)
   if (db_parse_arguments())
     return;
 
-  /* Initialize timers if in debug mode */
-  if (db_globals.debug)
+  /* Initialize timers */
+  exec_timers = sb_alloc_per_thread_array(sizeof(sb_timer_t));
+  fetch_timers = sb_alloc_per_thread_array(sizeof(sb_timer_t));
+
+  if (sb_histogram_init(&db_query_latency_histogram, OPER_LOG_GRANULARITY,
+                        OPER_LOG_MIN_VALUE, OPER_LOG_MAX_VALUE))
   {
-    exec_timers = sb_alloc_per_thread_array(sizeof(sb_timer_t));
-    fetch_timers = sb_alloc_per_thread_array(sizeof(sb_timer_t));
+    log_text(LOG_FATAL, "Init DB latency histogram fail");
+    return;
   }
 
   db_reset_stats();
@@ -485,7 +504,16 @@ db_result_t *db_execute(db_stmt_t *stmt)
 
   rs->statement = stmt;
 
-  con->error = con->driver->ops.execute(stmt, rs);
+  if (sb_globals.warmup_finished)
+  {
+    sb_query_start(con->thread_id);
+    con->error = con->driver->ops.execute(stmt, rs);
+    sb_query_stop(con->thread_id);
+  }
+  else
+  {
+    con->error = con->driver->ops.execute(stmt, rs);
+  }
 
   sb_counter_inc(con->thread_id, rs->counter);
 
@@ -615,7 +643,16 @@ db_result_t *db_query(db_conn_t *con, const char *query, size_t len)
     return NULL;
   }
 
-  con->error = con->driver->ops.query(con, query, len, rs);
+  if (sb_globals.warmup_finished)
+  {
+    sb_query_start(con->thread_id);
+    con->error = con->driver->ops.query(con, query, len, rs);
+    sb_query_stop(con->thread_id);
+  }
+  else
+  {
+    con->error = con->driver->ops.query(con, query, len, rs);
+  }
 
   sb_counter_inc(con->thread_id, rs->counter);
 
@@ -797,13 +834,10 @@ void db_done(void)
 
   disable_print_stats();
 
-  if (db_globals.debug)
-  {
-    free(exec_timers);
-    free(fetch_timers);
+  free(exec_timers);
+  free(fetch_timers);
 
-    exec_timers = fetch_timers = NULL;
-  }
+  exec_timers = fetch_timers = NULL;
 
   SB_LIST_FOR_EACH(pos, &drivers)
   {
@@ -1140,38 +1174,52 @@ void db_report_cumulative(sb_stat_t *stat)
   log_text(LOG_NOTICE, "    reconnects:                          %-6" PRIu64
            " (%.2f per sec.)", stat->reconnects, stat->reconnects / seconds);
 
-  if (db_globals.debug)
+  sb_timer_init(&exec_timer);
+  sb_timer_init(&fetch_timer);
+
+  for (unsigned i = 0; i < sb_globals.threads; i++)
   {
-    sb_timer_init(&exec_timer);
-    sb_timer_init(&fetch_timer);
-
-    for (unsigned i = 0; i < sb_globals.threads; i++)
-    {
-      exec_timer = sb_timer_merge(&exec_timer, exec_timers + i);
-      fetch_timer = sb_timer_merge(&fetch_timer, fetch_timers + i);
-    }
-
-    log_text(LOG_DEBUG, "");
-    log_text(LOG_DEBUG, "Query execution statistics:");
-    log_text(LOG_DEBUG, "    min:                                %.4fs",
-             NS2SEC(sb_timer_min(&exec_timer)));
-    log_text(LOG_DEBUG, "    avg:                                %.4fs",
-             NS2SEC(sb_timer_avg(&exec_timer)));
-    log_text(LOG_DEBUG, "    max:                                %.4fs",
-             NS2SEC(sb_timer_max(&exec_timer)));
-    log_text(LOG_DEBUG, "  total:                                %.4fs",
-             NS2SEC(sb_timer_sum(&exec_timer)));
-
-    log_text(LOG_DEBUG, "Results fetching statistics:");
-    log_text(LOG_DEBUG, "    min:                                %.4fs",
-             NS2SEC(sb_timer_min(&fetch_timer)));
-    log_text(LOG_DEBUG, "    avg:                                %.4fs",
-             NS2SEC(sb_timer_avg(&fetch_timer)));
-    log_text(LOG_DEBUG, "    max:                                %.4fs",
-             NS2SEC(sb_timer_max(&fetch_timer)));
-    log_text(LOG_DEBUG, "  total:                                %.4fs",
-             NS2SEC(sb_timer_sum(&fetch_timer)));
+    exec_timer = sb_timer_merge(&exec_timer, exec_timers + i);
+    fetch_timer = sb_timer_merge(&fetch_timer, fetch_timers + i);
   }
+
+  log_text(LOG_NOTICE, "");
+  log_text(LOG_NOTICE, "Query execution statistics (ms):");
+  log_text(LOG_NOTICE, "    min:  %39.3f",
+           NS2MS(sb_timer_min(&exec_timer)));
+  log_text(LOG_NOTICE, "    avg:  %39.3f",
+           NS2MS(sb_timer_avg(&exec_timer)));
+  log_text(LOG_NOTICE, "    max:  %39.3f",
+           NS2MS(sb_timer_max(&exec_timer)));
+  log_text(LOG_NOTICE, "  999th:  %39.3f",
+           sb_histogram_get_pct_cumulative(&db_query_latency_histogram,
+                                           99.9));
+  log_text(LOG_NOTICE, "   99th:  %39.3f",
+           sb_histogram_get_pct_cumulative(&db_query_latency_histogram,
+                                           99));
+  log_text(LOG_NOTICE, "   95th:  %39.3f",
+           sb_histogram_get_pct_cumulative(&db_query_latency_histogram,
+                                           95));
+  log_text(LOG_NOTICE, "   90th:  %39.3f",
+           sb_histogram_get_pct_cumulative(&db_query_latency_histogram,
+                                           90));
+  log_text(LOG_NOTICE, "   50th:  %39.3f",
+           sb_histogram_get_pct_cumulative(&db_query_latency_histogram,
+                                           50));
+  log_text(LOG_NOTICE, "  total:  %39.3f",
+           NS2MS(sb_timer_sum(&exec_timer)));
+
+  /* log_text(LOG_NOTICE, "Results fetching statistics (ms):");
+  log_text(LOG_NOTICE, "    min:                                %.3f",
+           NS2MS(sb_timer_min(&fetch_timer)));
+  log_text(LOG_NOTICE, "    avg:                                %.3f",
+           NS2MS(sb_timer_avg(&fetch_timer)));
+  log_text(LOG_NOTICE, "    max:                                %.3f",
+           NS2MS(sb_timer_max(&fetch_timer)));
+  log_text(LOG_NOTICE, "  total:                                %.3f",
+           NS2MS(sb_timer_sum(&fetch_timer)));*/
+
+  sb_histogram_done(&db_query_latency_histogram);
 
   /* Report sysbench general stats */
   sb_report_cumulative(stat);
@@ -1188,12 +1236,9 @@ static void db_reset_stats(void)
   */
   sb_timer_current(&sb_intermediate_timer);
 
-  if (db_globals.debug)
+  for (i = 0; i < sb_globals.threads; i++)
   {
-    for (i = 0; i < sb_globals.threads; i++)
-    {
-      sb_timer_init(exec_timers + i);
-      sb_timer_init(fetch_timers + i);
-    }
+    sb_timer_init(exec_timers + i);
+    sb_timer_init(fetch_timers + i);
   }
 }

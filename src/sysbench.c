@@ -618,6 +618,13 @@ void print_run_mode(sb_test_t *test)
 {
   log_text(LOG_NOTICE, "Running the test with following options:");
   log_text(LOG_NOTICE, "Number of threads: %d", sb_globals.threads);
+  if (!strcmp(sb_get_value_string("rand-type"), "zipfian")){
+    log_text(LOG_NOTICE, "Rand type: %s (%.2lf)", sb_get_value_string("rand-type"),
+             sb_get_value_double("rand-zipfian-exp"));
+  } else {
+    log_text(LOG_NOTICE, "Rand type: %s", sb_get_value_string("rand-type"));
+  }
+  log_text(LOG_NOTICE, "Workload: %s", sb_globals.testname);
 
   if (sb_globals.warmup_time > 0)
     log_text(LOG_NOTICE, "Warmup time: %ds", sb_globals.warmup_time);
@@ -1141,6 +1148,8 @@ static int run_test(sb_test_t *test)
     }
   }
 
+  sb_globals.warmup_finished = false;
+
   if ((err = sb_thread_create_workers(&worker_thread)))
     return err;
 
@@ -1190,6 +1199,8 @@ static int run_test(sb_test_t *test)
     sb_stat_t stat;
     checkpoint(&stat);
   }
+
+  sb_globals.warmup_finished = true;
 
   /* Signal the report threads to start reporting */
   if (sb_barrier_wait(&report_barrier) < 0)
