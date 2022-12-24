@@ -22,6 +22,19 @@ function init()
    assert(event ~= nil,
           "this script is meant to be included by other OLTP scripts and " ..
              "should not be called directly.")
+   if(sysbench.opt.masters_num > 0) then
+      assert(sysbench.opt.master_id > 0 and
+             sysbench.opt.master_id <= sysbench.opt.masters_num, "invalid master id")
+      assert(sysbench.opt.tables_per_master > 0, "invalid tables_per_master")
+      assert(sysbench.opt.master_interleave <= 1, "invalid master_interleave")
+      assert(sysbench.opt.masters_num *  sysbench.opt.tables_per_master <=
+             sysbench.opt.tables, "number of tables not enough")
+   end
+   print(string.format("Tables: %dx%d", sysbench.opt.tables, sysbench.opt.table_size));
+   print("Number of masters: " .. sysbench.opt.masters_num);
+   print("Tables per masters: " .. sysbench.opt.tables_per_master);
+   print("Master ID: " .. sysbench.opt.master_id);
+   print("Master interleave: " .. sysbench.opt.master_interleave .. "\n");
 end
 
 if sysbench.cmdline.command == nil then
@@ -37,6 +50,14 @@ sysbench.cmdline.options = {
       {"Range size for range SELECT queries", 100},
    tables =
       {"Number of tables", 1},
+   tables_per_master =
+      {"Number of tables per master", 1},
+   masters_num =
+      {"Number of masters", 0},
+   master_interleave =
+      {"master interleave", 0},
+   master_id =
+      {"master id", 0},
    point_selects =
       {"Number of point SELECT queries per transaction", 10},
    simple_ranges =
@@ -401,7 +422,17 @@ function cleanup()
 end
 
 local function get_table_num()
-   return sysbench.rand.uniform(1, sysbench.opt.tables)
+   if (sysbench.opt.masters_num == 0) then
+      return sysbench.rand.uniform(1, sysbench.opt.tables)
+   end
+   if (sysbench.rand.uniform_double() < sysbench.opt.master_interleave ) then
+
+      return sysbench.rand.uniform(1, sysbench.opt.tables_per_master *
+                                      sysbench.opt.masters_num)
+   end
+   table_num = (sysbench.opt.master_id - 1) * sysbench.opt.tables_per_master + 1;
+   return sysbench.rand.uniform(table_num,
+                                table_num + sysbench.opt.tables_per_master - 1);
 end
 
 local function get_id()
