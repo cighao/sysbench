@@ -668,20 +668,6 @@ void print_run_mode(sb_test_t *test)
   if (sb_globals.validate)
     log_text(LOG_NOTICE, "Validation checks: on.\n");
 
-  if (sb_rand_seed)
-  {
-    log_text(LOG_NOTICE,
-             "Initializing random number generator from seed (%d).\n",
-             sb_rand_seed);
-    srandom(sb_rand_seed);
-  }
-  else
-  {
-    log_text(LOG_NOTICE,
-             "Initializing random number generator from current time\n");
-    srandom(time(NULL));
-  }
-
   if (sb_globals.force_shutdown)
     log_text(LOG_NOTICE, "Forcing shutdown in %u seconds",
              (unsigned) NS2SEC(sb_globals.max_time_ns) + sb_globals.timeout);
@@ -1484,7 +1470,28 @@ int main(int argc, char *argv[])
     printf("%s\n", VERSION_STRING);
     return EXIT_SUCCESS;
   }
-  
+
+  /* We should move srandom() here becasue it will use random() to initialize
+     rand.unique() in sb_rand_init(), called in sb_rand_init() */
+  int sb_rand_seed = sb_get_value_int("rand-seed");
+  if (sb_rand_seed)
+  {
+    log_text(LOG_NOTICE,
+             "Initializing random number generator from seed (%d).\n",
+             sb_rand_seed);
+    srandom(sb_rand_seed);
+  }
+  else
+  {
+    log_text(LOG_NOTICE,
+             "Initializing random number generator from current time\n");
+    /* In case of we launch more than one sysbench to test one system in a very
+    short time, we should use the high-resolution time for rand-seed. */
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    srandom(tv.tv_sec * 1000 * 1000 + tv.tv_usec);
+  }
+
   /* Initialize global variables and logger */
   if (init() || log_init() || sb_counters_init())
     return EXIT_FAILURE;

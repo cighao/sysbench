@@ -58,9 +58,6 @@
 
 TLS sb_rng_state_t sb_rng_state CK_CC_CACHELINE;
 
-/* Exported variables */
-int sb_rand_seed; /* optional seed set on the command line */
-
 /* Random numbers command line options */
 
 static sb_arg_t rand_args[] =
@@ -135,8 +132,6 @@ int sb_rand_register(void)
 int sb_rand_init(void)
 {
   char     *s;
-
-  sb_rand_seed = sb_get_value_int("rand-seed");
 
   s = sb_get_value_string("rand-type");
   if (!strcmp(s, "uniform"))
