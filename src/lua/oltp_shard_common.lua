@@ -205,34 +205,30 @@ function create_table(drv, con, table_num)
 
    print(string.format("Creating table 'sbtest%d'...", table_num))
 
-   local masters_num = sysbench.opt.masters_num
    local partition_str = ""
-   if(masters_num > 0) then
-    print(string.format("Partition table to %d partitions ...", masters_num))
-    local num = sysbench.opt.table_size / masters_num
-    partition_str = "PARTITION BY RANGE (id) ( "
-    for i = 1, masters_num do 
-      local val = num * i
-      if (i == masters_num and val <= sysbench.opt.table_size) then
-         val = sysbench.opt.table_size + 1
+   if(sysbench.opt.masters_num > 0) then
+      local partition_num = sysbench.opt.masters_num + 1;
+      print(string.format("Partition table to %d partitions ...", partition_num))
+      local num = math.floor(sysbench.opt.table_size / partition_num)
+      partition_str = "PARTITION BY RANGE (id) ( "
+      for i = 1, partition_num do
+         local start_val = num * (i - 1)
+         local end_val = start_val + num
+         if (i == partition_num and end_val <= sysbench.opt.table_size) then
+            end_val = sysbench.opt.table_size + 1
+         end
+         if drv:name() == "pgsql" then
+            partition_str = string.format("%s PARTITION p%d VALUES from (%d) to (%d)",
+                                 partition_str, i, start_val, end_val)
+         else
+            partition_str = string.format("%s PARTITION p%d VALUES LESS THAN (%d)",
+                                 partition_str, i, end_val)
+         end
+         if(i < partition_num) then
+            partition_str = partition_str .. ", "
+         end
       end
-      if drv:name() == "pgsql" then
-        local start_val = num * (i - 1)
-        local end_val = num * i
-        if (i == masters_num and end_val <= sysbench.opt.table_size) then
-          end_val = sysbench.opt.table_size + 1
-        end
-        partition_str = string.format("%s PARTITION p%d VALUES from (%d) to (%d)",
-                            partition_str, i, start_val, end_val)
-      else
-        partition_str = string.format("%s PARTITION p%d VALUES LESS THAN (%d)",
-                            partition_str, i, val)
-      end
-      if(i < masters_num) then
-        partition_str = partition_str .. ", "
-      end
-    end
-    partition_str = partition_str .. ")"
+      partition_str = partition_str .. ")"
    end
 
    query = string.format([[
@@ -460,7 +456,7 @@ local function get_id()
    if (sysbench.opt.proxy_endpoint) then
     master_id = local_master_id
    end
-   local num = sysbench.opt.table_size / sysbench.opt.masters_num
+   local num = math.floor(sysbench.opt.table_size / (sysbench.opt.masters_num + 1))
    local start = num * (master_id - 1)
    return sysbench.rand.default(start, start + num)
 end

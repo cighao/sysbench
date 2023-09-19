@@ -422,15 +422,15 @@ function cleanup()
 end
 
 local function get_table_num()
-   if (sysbench.opt.masters_num == 0) then
+   if (sysbench.opt.masters_num == 0 or sysbench.opt.master_id == 0) then
       return sysbench.rand.uniform(1, sysbench.opt.tables)
    end
+   local table_id = sysbench.opt.master_id
    if (sysbench.rand.uniform_double() < sysbench.opt.master_interleave ) then
 
-      return sysbench.rand.uniform(1, sysbench.opt.tables_per_master *
-                                      sysbench.opt.masters_num)
+      table_id = sysbench.opt.masters_num + 1
    end
-   table_num = (sysbench.opt.master_id - 1) * sysbench.opt.tables_per_master + 1;
+   local table_num = (table_id - 1) * sysbench.opt.tables_per_master + 1;
    return sysbench.rand.uniform(table_num,
                                 table_num + sysbench.opt.tables_per_master - 1);
 end
