@@ -309,6 +309,21 @@ end
 
 function prepare_for_each_table(key)
    for t = 1, sysbench.opt.tables do
+
+      -- only prepare the requested tables
+      if sysbench.opt.master_id > 0 and sysbench.opt.masters_num > 0 then
+         local start_num = (sysbench.opt.master_id - 1) * sysbench.opt.tables_per_master + 1
+         local end_num = start_num + sysbench.opt.tables_per_master - 1
+         if(t < start_num or t > end_num) then
+            -- If not in its own partition, check if it's in the common partition */
+            start_num = sysbench.opt.masters_num * sysbench.opt.tables_per_master + 1
+            end_num = start_num + sysbench.opt.tables_per_master - 1
+            if(t < start_num or t > end_num) then
+               goto continue
+            end
+         end
+      end
+
       stmt[t][key] = con:prepare(string.format(stmt_defs[key][1], t))
 
       local nparam = #stmt_defs[key] - 1
@@ -336,6 +351,7 @@ function prepare_for_each_table(key)
       if nparam > 0 then
          stmt[t][key]:bind_param(unpack(param[t][key]))
       end
+      ::continue::
    end
 end
 
